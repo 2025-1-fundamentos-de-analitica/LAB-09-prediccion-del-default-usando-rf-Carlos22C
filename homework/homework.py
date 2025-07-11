@@ -92,3 +92,108 @@
 # {'type': 'cm_matrix', 'dataset': 'train', 'true_0': {"predicted_0": 15562, "predicte_1": 666}, 'true_1': {"predicted_0": 3333, "predicted_1": 1444}}
 # {'type': 'cm_matrix', 'dataset': 'test', 'true_0': {"predicted_0": 15562, "predicte_1": 650}, 'true_1': {"predicted_0": 2490, "predicted_1": 1420}}
 #
+
+import pandas as pd
+import numpy as np
+import os
+import gzip
+import pickle
+import json
+
+from sklearn.model_selection import GridSearchCV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import precision_score, recall_score, f1_score, balanced_accuracy_score, confusion_matrix
+
+def cargar_dataset(path):
+    return pd.read_csv(path, compression="zip")
+
+def limpiar_dataset(df):
+    df = df.copy()
+    df.rename(columns={"default payment next month": "default"}, inplace=True)
+    df.drop(columns="ID", inplace=True)
+    df = df[(df["EDUCATION"] != 0) & (df["MARRIAGE"] != 0)]
+    df.loc[df["EDUCATION"] > 4, "EDUCATION"] = 4
+    return df
+
+def separar_variables(df_train, df_test):
+    x_tr = df_train.drop(columns=["default"])
+    y_tr = df_train["default"]
+    x_te = df_test.drop(columns=["default"])
+    y_te = df_test["default"]
+    return x_tr, y_tr, x_te, y_te
+
+def construir_pipeline():
+    cat_cols = ["EDUCATION", "SEX", "MARRIAGE"]
+    preproc = ColumnTransformer(transformers=[
+        ("cat", OneHotEncoder(handle_unknown="ignore"), cat_cols)
+    ], remainder="passthrough")
+
+    clf = RandomForestClassifier(random_state=42)
+    pipe = Pipeline(steps=[
+        ("transformacion", preproc),
+        ("clasificador", clf)
+    ])
+    return pipe
+
+def optimizar_modelo(pipeline, X, y):
+    params = {
+        "clasificador__n_estimators": [300],
+        "clasificador__max_depth": [30],
+        "clasificador__min_samples_split": [5],
+        "clasificador__min_samples_leaf": [1],
+        "clasificador__max_features": ["sqrt"]
+    }
+    gs = GridSearchCV(pipeline, params, scoring="balanced_accuracy", cv=10, n_jobs=-1, verbose=0)
+    return gs.fit(X, y)
+
+def guardar_modelo_trenado(modelo, destino):
+    os.makedirs(os.path.dirname(destino), exist_ok=True)
+    with gzip.open(destino, "wb") as salida:
+        pickle.dump(modelo, salida)
+
+def obtener_metricas(modelo, X, y, tipo):
+    y_hat = modelo.predict(X)
+    return {
+        "type": "metrics",
+        "dataset": tipo,
+        "precision": round(precision_score(y, y_hat), 4),
+        "balanced_accuracy": round(balanced_accuracy_score(y, y_hat), 4),
+        "recall": round(recall_score(y, y_hat), 4),
+        "f1_score": round(f1_score(y, y_hat), 4)
+    }, y_hat
+
+def generar_matriz_confusion(y_real, y_pred, tipo):
+    matriz = confusion_matrix(y_real, y_pred)
+    return {
+        "type": "cm_matrix",
+        "dataset": tipo,
+        "true_0": {"predicted_0": int(matriz[0][0]), "predicted_1": int(matriz[0][1])},
+        "true_1": {"predicted_0": int(matriz[1][0]), "predicted_1": int(matriz[1][1])}
+    }
+
+def main():
+    os.makedirs("files/output", exist_ok=True)
+    train = limpiar_dataset(cargar_dataset("files/input/train_data.csv.zip"))
+    test = limpiar_dataset(cargar_dataset("files/input/test_data.csv.zip"))
+
+    X_train, y_train, X_test, y_test = separar_variables(train, test)
+    pipeline = construir_pipeline()
+    mejor = optimizar_modelo(pipeline, X_train, y_train)
+
+    mtrain, pred_train = obtener_metricas(mejor, X_train, y_train, "train")
+    mtest, pred_test = obtener_metricas(mejor, X_test, y_test, "test")
+
+    ctrain = generar_matriz_confusion(y_train, pred_train, "train")
+    ctest = generar_matriz_confusion(y_test, pred_test, "test")
+
+    with open("files/output/metrics.json", "w") as f:
+        for fila in [mtrain, mtest, ctrain, ctest]:
+            f.write(json.dumps(fila) + "\n")
+
+    guardar_modelo_trenado(mejor, "files/models/model.pkl.gz")
+
+if __name__ == "__main__":
+    main()
