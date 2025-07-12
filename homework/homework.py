@@ -147,7 +147,8 @@ def optimizar_modelo(pipeline, X, y):
         "clasificador__max_features": ["sqrt"]
     }
     gs = GridSearchCV(pipeline, params, scoring="balanced_accuracy", cv=10, n_jobs=-1, verbose=0)
-    return gs.fit(X, y)
+    gs.fit(X, y)
+    return gs.best_estimator_
 
 def guardar_modelo_trenado(modelo, destino):
     os.makedirs(os.path.dirname(destino), exist_ok=True)
@@ -181,10 +182,10 @@ def main():
 
     X_train, y_train, X_test, y_test = separar_variables(train, test)
     pipeline = construir_pipeline()
-    mejor = optimizar_modelo(pipeline, X_train, y_train)
+    mejor_modelo = optimizar_modelo(pipeline, X_train, y_train)
 
-    mtrain, pred_train = obtener_metricas(mejor, X_train, y_train, "train")
-    mtest, pred_test = obtener_metricas(mejor, X_test, y_test, "test")
+    mtrain, pred_train = obtener_metricas(mejor_modelo, X_train, y_train, "train")
+    mtest, pred_test = obtener_metricas(mejor_modelo, X_test, y_test, "test")
 
     ctrain = generar_matriz_confusion(y_train, pred_train, "train")
     ctest = generar_matriz_confusion(y_test, pred_test, "test")
@@ -193,7 +194,7 @@ def main():
         for fila in [mtrain, mtest, ctrain, ctest]:
             f.write(json.dumps(fila) + "\n")
 
-    guardar_modelo_trenado(mejor, "files/models/model.pkl.gz")
+    guardar_modelo_trenado(mejor_modelo, "files/models/model.pkl.gz")
 
 if __name__ == "__main__":
     main()
